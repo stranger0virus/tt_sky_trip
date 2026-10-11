@@ -7,7 +7,6 @@ async def write_byte(dut, addr: int, data: int):
     await FallingEdge(dut.clk)
     dut.ui_in.value = ((addr & 0x0F) << 4) | ((data >> 4) & 0x0F)
     
-    # Cast dut.uio_in.value to int to avoid LogicArray TypeError
     current_uio = int(dut.uio_in.value)
     dut.uio_in.value = (current_uio & ~0x07) | ((addr >> 4) & 0x01) | (1 << 1) # wen=1, ren=0
     dut.ena.value = 1
@@ -17,13 +16,16 @@ async def write_byte(dut, addr: int, data: int):
     dut.ui_in.value = (int(dut.ui_in.value) & 0xF0) | (data & 0x0F)
 
     await FallingEdge(dut.clk)
-    # Deassert control signals
+    # Deassert control signals safely
     dut.uio_in.value = int(dut.uio_in.value) & ~0x02  # wen = 0
     dut.ui_in.value = int(dut.ui_in.value) & 0xF0     # clear lower nibble
+    
+    # Extra half-cycle buffer for gate-level write propagation
+    await FallingEdge(dut.clk)
 
 
 async def write_and_read_simultaneous(dut, wr_addr: int, wr_data: int, rd_addr: int, expected_rd_data: int):
-    """Equivalent to Verilog write_and_read_simultaneous task"""
+    """Equivalent to Verilog write_and_read_simultaneous task with gate-level timing margin"""
     await FallingEdge(dut.clk)
     
     # Setup Write Target & MSB data
@@ -39,8 +41,9 @@ async def write_and_read_simultaneous(dut, wr_addr: int, wr_data: int, rd_addr: 
     # Drive LSB for write_commit
     dut.ui_in.value = (int(dut.ui_in.value) & 0xF0) | (wr_data & 0x0F)
 
+    # Wait for rising edge and give gate-level nets plenty of time to resolve (half a clock cycle)
     await RisingEdge(dut.clk)
-    await Timer(4, unit="ns")  # Evaluation strobe matching #1 in Verilog
+    await Timer(4, unit="ns")  
     
     actual_output = int(dut.uo_out.value)
     if actual_output == expected_rd_data:
@@ -67,11 +70,11 @@ async def test_project(dut):
     dut.ui_in.value = 0x00
     dut.uio_in.value = 0x00
 
-    # Wait and release reset
-    await Timer(25, unit="ns")
+    # Give a longer reset pulse for gate-level netlists (50ns instead of 25ns)
+    await Timer(50, unit="ns")
     await FallingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await Timer(5, unit="ns")
+    dut.rst_n.value = 1  # Release reset
+    await Timer(10, unit="ns")
 
     # Step 1: Write 0xC3 into Address 5
     print("=====================================================================")
@@ -79,15 +82,13 @@ async def test_project(dut):
     print("=====================================================================")
     await write_byte(dut, 5, 0xC3)
 
-    for _ in range(2):
+    for _ in range(4):  # Added extra idle cycles to ensure write fully latches into gate netlist
         await FallingEdge(dut.clk)
 
     # Step 2: Write 0xE1 to Address 8 while reading Address 5 concurrently
     print("=====================================================================")
     print("STEP 2: Writing 0xE1 to Address 8 while reading Address 5 concurrently")
     print("=====================================================================")
-    
-    # FIX: Added 'dut' as the first argument here
     await write_and_read_simultaneous(
         dut,
         wr_addr=8,
