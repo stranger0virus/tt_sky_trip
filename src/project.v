@@ -120,9 +120,9 @@ module tt_um_example (
                     $display("  Target dec_wr_addr    : %0d", dec_wr_addr);
                 end else begin
                     // Clock 2: Assemble MSB + LSB into full 8-bit byte and encrypt
-                    full_assembled_byte <= {msb_buf, data_in};
-                    full_encrypted_byte <= full_assembled_byte ^ CIPHER_KEY;
-                    nibble_phase        <= 1'b0;
+                    full_assembled_byte = {msb_buf, data_in};
+                    full_encrypted_byte = full_assembled_byte ^ CIPHER_KEY;
+                    nibble_phase        = 1'b0;
 
                     $display("\n[WRITE CYCLE 2: LSB & write_commit]");
                     $display("  Incoming data_in[3:0] : 4'b%04b", data_in);
