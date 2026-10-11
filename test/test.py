@@ -86,7 +86,10 @@ async def test_project(dut):
     print("=====================================================================")
     print("STEP 2: Writing 0xE1 to Address 8 while reading Address 5 concurrently")
     print("=====================================================================")
+    
+    # FIX: Added 'dut' as the first argument here
     await write_and_read_simultaneous(
+        dut,
         wr_addr=8,
         wr_data=0xE1,
         rd_addr=5,
