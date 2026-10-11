@@ -85,7 +85,7 @@ module tt_um_example (
     always @(*) begin
         rd_bitline = 8'h00;
         for (b = 0; b < 32; b = b + 1) begin
-            rd_bitline = rd_bitline | gated_mem_cells[b*8 +: 8];
+            rd_bitline <= rd_bitline | gated_mem_cells[b*8 +: 8];
         end
     end
 
@@ -120,8 +120,8 @@ module tt_um_example (
                     $display("  Target dec_wr_addr    : %0d", dec_wr_addr);
                 end else begin
                     // Clock 2: Assemble MSB + LSB into full 8-bit byte and encrypt
-                    full_assembled_byte = {msb_buf, data_in};
-                    full_encrypted_byte = full_assembled_byte ^ CIPHER_KEY;
+                    full_assembled_byte <= {msb_buf, data_in};
+                    full_encrypted_byte <= full_assembled_byte ^ CIPHER_KEY;
                     nibble_phase        <= 1'b0;
 
                     $display("\n[WRITE CYCLE 2: LSB & write_commit]");
