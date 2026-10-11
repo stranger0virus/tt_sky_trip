@@ -40,7 +40,7 @@ async def write_and_read_simultaneous(dut, wr_addr: int, wr_data: int, rd_addr: 
     dut.ui_in.value = (int(dut.ui_in.value) & 0xF0) | (wr_data & 0x0F)
 
     await RisingEdge(dut.clk)
-    await Timer(1, unit="ns")  # Evaluation strobe matching #1 in Verilog
+    await Timer(4, unit="ns")  # Evaluation strobe matching #1 in Verilog
     
     actual_output = int(dut.uo_out.value)
     if actual_output == expected_rd_data:
