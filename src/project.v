@@ -38,29 +38,67 @@ module tt_um_example (
     assign uio_oe  = 8'h00;
 
     // ----------------------------------------------------------------
-    // 2. Flattened 32-Byte Registers (Explicitly synthesizable to standard DFFs)
+    // 2. Physical 128-Bit Memory Array & Registers (16 bytes x 8 bits)
     // ----------------------------------------------------------------
-    reg [3:0]   msb_buf;       
-    reg         nibble_phase;  
-    
-    reg [7:0] r0,  r1,  r2,  r3,  r4,  r5,  r6,  r7;
-    reg [7:0] r8,  r9,  r10, r11, r12, r13, r14, r15;
-    reg [7:0] r16, r17, r18, r19, r20, r21, r22, r23;
-    reg [7:0] r24, r25, r26, r27, r28, r29, r30, r31;
+    reg [3:0]   msb_buf;       // Buffer to hold upper nibble across Clock 1
+    reg         nibble_phase;  // 0 = Waiting for MSB, 1 = Waiting for LSB
+    reg [127:0] mem_cells;     // 128 physical bit storage cells (16 bytes x 8 bits)
 
     // ----------------------------------------------------------------
-    // 3. Synchronous Execution Core
+    // 3. Write 4:16 Decoder -> 128 Write Enable Lines (16 slots)
+    // ----------------------------------------------------------------
+    wire [15:0] wr_wordline     = (cs && wen) ? (16'b1 << dec_wr_addr[3:0]) : 16'b0;
+    wire        addr_ready_flag = |wr_wordline && (dec_wr_addr < 5'd16);
+
+    // Expand 16 wordlines to 128 parallel bit enables (8 lines per slice)
+    wire [127:0] wr_bit_enables;
+    genvar w;
+    generate
+        for (w = 0; w < 16; w = w + 1) begin : gen_wr_enables
+            assign wr_bit_enables[w*8 +: 8] = {8{wr_wordline[w]}};
+        end
+    endgenerate
+
+    // ----------------------------------------------------------------
+    // 4. Read 4:16 Decoder -> 128 Read Gating -> 8-Bit Read Bitline Bus
+    // ----------------------------------------------------------------
+    wire [15:0] rd_wordline     = (cs && ren) ? (16'b1 << dec_rd_addr[3:0]) : 16'b0;
+
+    // Expand 16 wordlines to 128 parallel read selects (8 lines per slice)
+    wire [127:0] rd_bit_selects;
+    genvar r;
+    generate
+        for (r = 0; r < 16; r = r + 1) begin : gen_rd_selects
+            assign rd_bit_selects[r*8 +: 8] = {8{rd_wordline[r]}};
+        end
+    endgenerate
+
+    // Gate each of the 128 bit-cells with its read select line
+    wire [127:0] gated_mem_cells = mem_cells & rd_bit_selects;
+
+    // Combine all 16 slices onto the shared 8-bit read bitlines (Blocking = for combinational loop)
+    reg [7:0] rd_bitline;
+    integer b;
+    always @(*) begin
+        rd_bitline = 8'h00;
+        for (b = 0; b < 16; b = b + 1) begin
+            rd_bitline = rd_bitline | gated_mem_cells[b*8 +: 8];
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // 5. Synchronous Execution Core
     // ----------------------------------------------------------------
     reg [7:0] full_assembled_byte;
     reg [7:0] full_encrypted_byte;
+    integer bit_idx;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
             msb_buf      <= 4'b0000;
             nibble_phase <= 1'b0;
             data_out     <= 8'h00;
-            {r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15,
-             r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31} <= 256'b0;
+            mem_cells    <= 128'b0;
         end else if (!cs) begin
             nibble_phase <= 1'b0;
             data_out     <= 8'h00;
@@ -70,49 +108,34 @@ module tt_um_example (
                 nibble_phase <= 1'b0;
             end else begin
                 if (!nibble_phase) begin
+                    // Clock 1: Latch 4-bit MSB into msb_buf
                     msb_buf      <= data_in;
                     nibble_phase <= 1'b1;
+
+                    $display("\n[WRITE CYCLE 1: MSB]");
+                    $display("  Incoming data_in[3:0] : 4'b%04b", data_in);
+                    $display("  Target dec_wr_addr    : %0d", dec_wr_addr);
                 end else begin
+                    // Clock 2: Assemble MSB + LSB into full 8-bit byte and encrypt instantly
                     full_assembled_byte = {msb_buf, data_in};
                     full_encrypted_byte = full_assembled_byte ^ CIPHER_KEY;
                     nibble_phase        = 1'b0;
 
-                    // Explicit register writing based on dec_wr_addr
-                    case (dec_wr_addr)
-                        5'd0:  r0  <= full_encrypted_byte;
-                        5'd1:  r1  <= full_encrypted_byte;
-                        5'd2:  r2  <= full_encrypted_byte;
-                        5'd3:  r3  <= full_encrypted_byte;
-                        5'd4:  r4  <= full_encrypted_byte;
-                        5'd5:  r5  <= full_encrypted_byte;
-                        5'd6:  r6  <= full_encrypted_byte;
-                        5'd7:  r7  <= full_encrypted_byte;
-                        5'd8:  r8  <= full_encrypted_byte;
-                        5'd9:  r9  <= full_encrypted_byte;
-                        5'd10: r10 <= full_encrypted_byte;
-                        5'd11: r11 <= full_encrypted_byte;
-                        5'd12: r12 <= full_encrypted_byte;
-                        5'd13: r13 <= full_encrypted_byte;
-                        5'd14: r14 <= full_encrypted_byte;
-                        5'd15: r15 <= full_encrypted_byte;
-                        5'd16: r16 <= full_encrypted_byte;
-                        5'd17: r17 <= full_encrypted_byte;
-                        5'd18: r18 <= full_encrypted_byte;
-                        5'd19: r19 <= full_encrypted_byte;
-                        5'd20: r20 <= full_encrypted_byte;
-                        5'd21: r21 <= full_encrypted_byte;
-                        5'd22: r22 <= full_encrypted_byte;
-                        5'd23: r23 <= full_encrypted_byte;
-                        5'd24: r24 <= full_encrypted_byte;
-                        5'd25: r25 <= full_encrypted_byte;
-                        5'd26: r26 <= full_encrypted_byte;
-                        5'd27: r27 <= full_encrypted_byte;
-                        5'd28: r28 <= full_encrypted_byte;
-                        5'd29: r29 <= full_encrypted_byte;
-                        5'd30: r30 <= full_encrypted_byte;
-                        5'd31: r31 <= full_encrypted_byte;
-                        default: ;
-                    endcase
+                    $display("\n[WRITE CYCLE 2: LSB & write_commit]");
+                    $display("  Incoming data_in[3:0] : 4'b%04b", data_in);
+                    $display("  Buffered MSB          : 4'b%04b", msb_buf);
+                    $display("  Assembled 8-Bit Data  : 8'b%08b (0x%02X)", full_assembled_byte, full_assembled_byte);
+                    $display("  XOR Encrypted Byte    : 8'b%08b (0x%02X)", full_encrypted_byte, full_encrypted_byte);
+
+                    if (addr_ready_flag) begin
+                        for (bit_idx = 0; bit_idx < 128; bit_idx = bit_idx + 1) begin
+                            if (wr_bit_enables[bit_idx]) begin
+                                mem_cells[bit_idx] <= full_encrypted_byte[bit_idx % 8];
+                            end
+                        end
+                        $display("  [SUCCESS] Written into bit-slice [%0d:%0d] of 128-bit memory", 
+                                 dec_wr_addr*8 + 7, dec_wr_addr*8);
+                    end
                 end
             end
 
@@ -120,42 +143,14 @@ module tt_um_example (
             if (!ren) begin
                 data_out <= 8'h00;
             end else begin
-                // Explicit register reading multiplexer based on dec_rd_addr
-                case (dec_rd_addr)
-                    5'd0:  data_out <= r0  ^ CIPHER_KEY;
-                    5'd1:  data_out <= r1  ^ CIPHER_KEY;
-                    5'd2:  data_out <= r2  ^ CIPHER_KEY;
-                    5'd3:  data_out <= r3  ^ CIPHER_KEY;
-                    5'd4:  data_out <= r4  ^ CIPHER_KEY;
-                    5'd5:  data_out <= r5  ^ CIPHER_KEY;
-                    5'd6:  data_out <= r6  ^ CIPHER_KEY;
-                    5'd7:  data_out <= r7  ^ CIPHER_KEY;
-                    5'd8:  data_out <= r8  ^ CIPHER_KEY;
-                    5'd9:  data_out <= r9  ^ CIPHER_KEY;
-                    5'd10: data_out <= r10 ^ CIPHER_KEY;
-                    5'd11: data_out <= r11 ^ CIPHER_KEY;
-                    5'd12: data_out <= r12 ^ CIPHER_KEY;
-                    5'd13: data_out <= r13 ^ CIPHER_KEY;
-                    5'd14: data_out <= r14 ^ CIPHER_KEY;
-                    5'd15: data_out <= r15 ^ CIPHER_KEY;
-                    5'd16: data_out <= r16 ^ CIPHER_KEY;
-                    5'd17: data_out <= r17 ^ CIPHER_KEY;
-                    5'd18: data_out <= r18 ^ CIPHER_KEY;
-                    5'd19: data_out <= r19 ^ CIPHER_KEY;
-                    5'd20: data_out <= r20 ^ CIPHER_KEY;
-                    5'd21: data_out <= r21 ^ CIPHER_KEY;
-                    5'd22: data_out <= r22 ^ CIPHER_KEY;
-                    5'd23: data_out <= r23 ^ CIPHER_KEY;
-                    5'd24: data_out <= r24 ^ CIPHER_KEY;
-                    5'd25: data_out <= r25 ^ CIPHER_KEY;
-                    5'd26: data_out <= r26 ^ CIPHER_KEY;
-                    5'd27: data_out <= r27 ^ CIPHER_KEY;
-                    5'd28: data_out <= r28 ^ CIPHER_KEY;
-                    5'd29: data_out <= r29 ^ CIPHER_KEY;
-                    5'd30: data_out <= r30 ^ CIPHER_KEY;
-                    5'd31: data_out <= r31 ^ CIPHER_KEY;
-                    default: data_out <= 8'h00;
-                endcase
+                // Decrypt from the 8-bit read bitlines onto data_out
+                data_out <= rd_bitline ^ CIPHER_KEY;
+
+                $display("\n[DECODER-DRIVEN READOUT]");
+                $display("  Read Target dec_rd_addr: %0d", dec_rd_addr);
+                $display("  Bit-Slice Selected     : [%0d:%0d]", dec_rd_addr*8 + 7, dec_rd_addr*8);
+                $display("  Read Bitline Encrypted : 8'b%08b (0x%02X)", rd_bitline, rd_bitline);
+                $display("  Decrypted data_out Bus : 8'b%08b (0x%02X)", rd_bitline ^ CIPHER_KEY, rd_bitline ^ CIPHER_KEY);
             end
         end
     end
